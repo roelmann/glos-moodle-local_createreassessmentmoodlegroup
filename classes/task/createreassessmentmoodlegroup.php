@@ -137,31 +137,52 @@ class createreassessmentmoodlegroup extends \core\task\scheduled_task {
             // Splits the group name.
             $groupname = explode('_', $group['group_name']);
             // Gets course values where course idnumber matches the first part of group name.
-            $sql4 = "SELECT * FROM {course} WHERE idnumber LIKE '%" . $groupname[0] . "%'";
+            $cl = strlen($group['group_name']);
+            $coursename = substr($group['group_name'], 0, $cl-6);
+            echo $coursename . "\n";
+            $sql4 = "SELECT * FROM {course} WHERE idnumber = '" . $coursename ."'";
             $courseid = $DB->get_records_sql($sql4);
-            echo 'CourseID : ' . "\n";
-            print_r($courseid);
-            // Checks course id is not empty.
-            if (!(empty($courseid))) {
-                $sql3 = "SELECT * FROM {groups} WHERE courseid = " .
-                    key($courseid) . " AND name LIKE '%" . $group['group_name'] . "%'";
-                $existingmdlgroup = $DB->get_records_sql($sql3);
-                if (empty($existingmdlgroup)) {
-                    $groupobj->name = $group['group_name'];
-                    $groupobj->courseid = key($courseid);
-                    groups_create_group($groupobj);
-                    $groupid = $DB->get_record_sql("select id from {groups} ORDER BY id DESC LIMIT 1");
-                    $sqlrestrict = "SELECT * FROM {course_modules}
-                    WHERE course = " . $groupobj->courseid . " AND
-                    idnumber = '" . $group['group_name'] ."'";
-                    $restricted = $DB->get_records_sql($sqlrestrict);
-                    echo 'RESTRICTED';
-                    print_r($group_obj);
-                    print_r($restricted);
-                    print_r($groupid->id);
-                    // Function to grant permission to group to access assessment.
-                    $this->grantPermission($groupobj->courseid, $restricted->section, $groupid->id);
+            foreach ($courseid as $c) {
+                // Checks course id is not empty.
+                if (!(empty($c))) {
+                    echo 'CourseID : ' . "\n";
+                    print_r($c);
+                    $sql3 = "SELECT * FROM {groups} WHERE courseid = " .
+                        $c->id . " AND name LIKE '%" . $group['group_name'] . "%'";
+                    $existingmdlgroup = $DB->get_records_sql($sql3);
+                    if (empty($existingmdlgroup)) {
+                        $groupobj->name = $group['group_name'];
+                        $groupobj->idnumber = $group['group_name'];
+                        $groupobj->courseid = $c->id;
+                        groups_create_group($groupobj);
+                        echo "Group created: " .$group['group_name']. "\n";
+                    }
+
+                    $groupid = $DB->get_records_sql("select * from {groups} WHERE idnumber = '" . $group['group_name'] ."' ORDER BY id DESC LIMIT 1");
+                    foreach ($groupid as $g) {
+                        $restricted = new stdClass();
+                        $sqlrestrictcheck = "SELECT * FROM {course_modules} WHERE idnumber = '" . $group['group_name'] ."'";
+                        if (!empty($DB->get_records_sql($sqlrestrictcheck))){
+                            $sqlrestrict = "SELECT * FROM {course_modules}
+                                WHERE course = " . $c->id . " AND
+                                idnumber = '" . $group['group_name'] ."'";
+                            $restricted = $DB->get_records_sql($sqlrestrict);
+                            foreach ($restricted as $r) {
+
+                                if(!empty($r)) {
+                                    echo 'RESTRICTED';
+                                    echo $r->idnumber;
+
+                                    // Function to grant permission to group to access assessment.
+                                    $this->grantPermission($c->id, $r->section, $r->id, $g->id);
+                                } else {
+                                    echo "Assessment module code does not exist";
+                                }
+                            }
+                        }
+                    }
                 }
+                rebuild_course_cache($c->id, true);
             }
         }
     }
@@ -172,27 +193,23 @@ class createreassessmentmoodlegroup extends \core\task\scheduled_task {
      * @param $sectionid id of the section to restrict access
      * @param $groupid id of the group will have access
      */
-    function grantPermission($course, $sectionid, $groupid ){
+    function grantPermission($course, $sectionid, $moduleid, $groupid ){
 
         global $DB;
 
         $restriction = '{"op":"&","c":[{"type":"group","id":'. $groupid .'}],"showc":[true]}';
 
-        if ($DB->record_exists('course_modules', array('course' => $course , 'section' => $sectionid ))) {
-            $module = $DB->get_record('course_modules', array('course' => $course , 'section' => $sectionid ), '*', MUST_EXIST);
+        $course_module = new stdClass();
+        $course_module->id = $moduleid;
+        $course_module->course = $course;
+        $course_module->section = $sectionid;
+        $course_module->availability = $restriction;
 
-            $course_module = new stdClass();
-            $course_module->id = $module->id;
-            $course_module->course = $course;
-            $course_module->section = $sectionid;
-            $course_module->availability = $restriction;
+        $res = $DB->update_record('course_modules', $course_module);
 
-            $res = $DB->update_record('course_modules', $course_module);
-
-            if ($res) {
-                rebuild_course_cache($course, true);
-            }
+        if ($res) {
+            rebuild_course_cache($course, true);
         }
-        return $res;
+    return $res;
     }
 }
